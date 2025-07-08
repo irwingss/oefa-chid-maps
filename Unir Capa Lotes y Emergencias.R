@@ -1,12 +1,13 @@
 library(readr)
 library(dplyr)
+library(openxlsx)
+library(sf)
 
-# 1. Cargar archivos
-lotes <- read_csv("Capa_lotes_WKT.csv") # Asegúrate que el archivo tenga columna "geometry_wkt"
+# 1. Leer los datos
+lotes <- read_csv("Capa_lotes_WKT.csv")
+emergencias <- read.xlsx("00_BD EMERGENCIAS-nuevo-formato.xlsx")
 
-emergencias <- openxlsx::read.xlsx("00_BD EMERGENCIAS-nuevo-formato.xlsx")
-
-# 2. Seleccionar columnas necesarias y renombrar
+# 2. Unificar emergencias en formato WKT tipo POINT
 puntos <- emergencias %>%
   select(ZONA, Este, Norte, Unidad.Fiscalizable, Administrado) %>%
   rename(
@@ -18,20 +19,26 @@ puntos <- emergencias %>%
     geometry_wkt = paste0("POINT (", Este, " ", Norte, ")")
   )
 
-# 3. Añadir columnas vacías que existen en el archivo de lotes pero no en puntos
+# 3. Añadir columnas faltantes
 cols_lotes <- colnames(lotes)
-cols_puntos <- colnames(puntos)
-
-# Añadir columnas faltantes como NA
-for (col in setdiff(cols_lotes, cols_puntos)) {
+for (col in setdiff(cols_lotes, colnames(puntos))) {
   puntos[[col]] <- NA
 }
-
-# Reordenar columnas
 puntos <- puntos %>% select(all_of(cols_lotes))
 
 # 4. Unir ambos datasets
 unificado <- bind_rows(lotes, puntos)
 
-# 5. Guardar como CSV
-write_csv(unificado, "Capa_Lotes_y_Emergencias_WKT.csv")
+# 5. Limpiar geometrías inválidas (las que tienen NA, espacios vacíos o errores)
+unificado <- unificado %>%
+  filter(!is.na(geometry_wkt), !grepl("NA", geometry_wkt))
+
+# 6. Convertir a objeto sf
+geo <- st_as_sf(unificado, wkt = "geometry_wkt", crs = 4326)
+
+# 7. Exportar a GeoJSON
+st_write(geo, "Capa_Lotes_y_Emergencias.geojson", driver = "GeoJSON")
+
+# Exportar CSV
+write.csv(geo, "Capa_Lotes_y_Emergencias.csv", row.names = FALSE, 
+          sep = ";", dec = ".")
